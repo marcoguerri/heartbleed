@@ -107,7 +107,8 @@ int main() {
             goto conn;
         }
         bytes_avail = 0, n_read =0, resp_len = 0;
-
+        n_read = recv(sock, hb_buff+resp_len, 4096, 0); 
+        resp_len += n_read;
         do {
             ioctl (sock,FIONREAD, &bytes_avail);
             if(bytes_avail == 0) {
