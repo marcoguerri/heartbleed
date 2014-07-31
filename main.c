@@ -20,20 +20,18 @@
 #define KEY_SCRAMBLED 301
 
 
-int connect_to_server() {
+int connect_to_server(struct sockaddr_in *serv_addr) {
     int sock = 0;
-    struct sockaddr_in serv_addr;
-
-    printf("\nConnecting...\n");
-    
+    printf("\nInitializing new connection...\n");
     sock=socket(AF_INET,SOCK_STREAM,0);
     
-    serv_addr.sin_family = AF_INET;
-    serv_addr.sin_port = htons(5080);
-    serv_addr.sin_addr.s_addr=inet_addr("127.0.0.1");
+    serv_addr->sin_family = AF_INET;
+    serv_addr->sin_port = htons(443);
+    serv_addr->sin_addr.s_addr=inet_addr("127.0.0.1");
     
-    connect(sock, (struct sockaddr *)&serv_addr, sizeof(serv_addr));
-
+    printf("Connecting...\n");
+    connect(sock, (struct sockaddr *)serv_addr, sizeof(*serv_addr));  
+    printf("Connected!\n");
     return sock;
 
 }
@@ -102,11 +100,11 @@ int main() {
          printf("Error while reading the private key");
         return 1;
     }
+	
+    struct sockaddr_in serv_addr;
+    sock = connect_to_server(&serv_addr);
 
-    sock = connect_to_server();
- 
-    write(sock, ssl_hello, HELLO_LEN);
-
+    int w = write(sock, ssl_hello, HELLO_LEN);
     /*
      * Reads the server  HELLO 
      */
@@ -128,7 +126,15 @@ int main() {
          */
         if(w==-1) {
             close(sock);
-            sock = connect_to_server();
+            sock = connect_to_server(&serv_addr);
+
+            int w = write(sock, ssl_hello, HELLO_LEN);
+ 	    /*
+             * Reads the server  HELLO 
+             */
+    	    n_read = recv(sock, serv_buff, 4096, 0);
+	   
+	     continue;
         }
 
         bytes_avail = 0, n_read =0, resp_len = 0;
