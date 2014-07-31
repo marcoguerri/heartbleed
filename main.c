@@ -16,7 +16,7 @@
 #define HB_BUFF  262144
 #define HELLO_LEN 320
 #define HB_LEN 8
-#define SERV_HELLO 1324
+#define SERV_HELLO 4096
 #define KEY_SCRAMBLED 301
 
 
