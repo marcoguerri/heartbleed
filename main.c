@@ -87,7 +87,7 @@ int main() {
         };
     
     signal(SIGPIPE, SIG_IGN);
-    unsigned int count = 0;
+    unsigned long int count = 0;
     int n_read, resp_len, lost =0 , bytes_lost=0;
     int bytes_avail;
     
@@ -119,7 +119,6 @@ int main() {
          * Sends the malformed heartbeat message 
          */
         int w  = write(sock, ssl_hb, HB_LEN);
-
         /*
          * Returns -1 if the connection was closed by the server.
          * Tries to connect again.
