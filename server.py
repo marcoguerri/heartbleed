@@ -33,8 +33,7 @@ print "Read " + str(len(buff))
 
 #
 # Reads a file which contains the key scrambled with some random
-# garbage. Reads the file in 64 byes chunks and sends the result to the 
-# client.
+# garbage and sends everything off to the client.
 #
 
 buff = f.read(1024)

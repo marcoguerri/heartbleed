@@ -36,6 +36,8 @@
 #define TLS 0x03, 0x02
 #define SSL_VER TLS
 
+#define SLEEP_SEC 2
+
 int connect_to_server(struct sockaddr_in *serv_addr) {
     int sock = 0;
     printf("Initializing new connection...\n");
@@ -125,14 +127,14 @@ int main() {
         /*
          * Requests the number of bytes available to be
          * read from the TCP buffer. If there's nothing
-         * to read, waits 500ms and tries again. If the
+         * to read, waits SLEEP_SEC sec and tries again. If the
          * receiving buffer is empty this second time, 
          * assumes the response from the server is over.
          * Otherwise keeps on reading.
          */
         ioctl (sock,FIONREAD, &bytes_avail);
         if(bytes_avail == 0) {
-            sleep(2);
+            sleep(SLEEP_SEC);
             ioctl (sock,FIONREAD, &bytes_avail);
             if(bytes_avail == 0) 
                 break;
